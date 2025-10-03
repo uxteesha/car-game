@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR Racing Physics Prototype</title>
+    <title>Strict AR Racing Physics Prototype</title>
     <!-- Tailwind CSS for simple, modern styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -24,11 +24,11 @@
             font-weight: bold;
             color: white;
             border: none;
-            border-radius: 9999px; /* Fully rounded */
+            border-radius: 9999px;
             cursor: pointer;
             transition: all 0.15s ease-in-out;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-            touch-action: manipulation; /* Improves touch responsiveness */
+            touch-action: manipulation;
         }
         .control-button:active {
             transform: scale(0.95);
@@ -67,7 +67,7 @@
                 window.addEventListener('car-move', (e) => {
                     if (e.detail.action in this.controls) {
                         this.controls[e.detail.action] = e.detail.state;
-                        // LOG 2: Input received and state updated
+                        // Log input receipt
                         console.log(`[Input Receiver] Action: ${e.detail.action}, State: ${e.detail.state}`);
                         this.el.setAttribute('car-controls', this.controls);
                     }
@@ -81,18 +81,19 @@
                 forward: { type: 'boolean', default: false },
                 left: { type: 'boolean', default: false },
                 right: { type: 'boolean', default: false },
-                speed: { type: 'number', default: 2.5 }, // Slightly increased speed
-                rotationSpeed: { type: 'number', default: 1.0 }, // Slightly increased rotation
+                speed: { type: 'number', default: 3.0 }, // Increased speed for visibility
+                rotationSpeed: { type: 'number', default: 1.5 }, // Increased rotation
             },
 
             init: function () {
                 this.body = null;
-                this.el.sceneEl.addEventListener('physics-loaded', () => {
+                // Wait for the A-Frame element and physics system to be ready
+                this.el.addEventListener('body-loaded', () => {
                     this.body = this.el.body;
                     if (!this.body) {
-                        console.error("Car entity failed to attach kinematic-body after physics loaded.");
+                        console.error("CRITICAL: Kinematic body failed to load.");
                     } else {
-                         // Initialize positions
+                         // Initialize position vectors once body is guaranteed to be there
                         this.tempPosition = new THREE.Vector3().copy(this.el.object3D.position);
                         this.tempQuaternion = new THREE.Quaternion().copy(this.el.object3D.quaternion);
                     }
@@ -100,12 +101,10 @@
             },
 
             tick: function (t, dt) {
+                // Do not run movement logic if body is not ready
                 if (!this.body || dt > 100) return;
                 
                 const { forward, left, right, speed, rotationSpeed } = this.data;
-                const body = this.body;
-                
-                // Get current visual rotation for steering
                 const carObject = this.el.object3D;
                 let angularVelocity = 0;
 
@@ -121,10 +120,9 @@
 
                 // --- 2. Forward Movement (Update Position) ---
                 if (forward) {
-                    // LOG 3: Confirm movement logic is running
+                    // Log movement confirmation
                     console.log("[Car Controls] Moving forward...");
 
-                    // Update visual position based on direction and speed
                     const currentRotation = carObject.rotation.y;
                     const direction = new THREE.Vector3(
                         Math.sin(currentRotation),
@@ -138,9 +136,9 @@
                     this.tempPosition.z += direction.z * moveDistance;
                 }
                 
-                // Always set the physics body's position/rotation to the calculated targets
-                body.position.copy(this.tempPosition);
-                body.quaternion.copy(carObject.quaternion);
+                // Set the physics body's position/rotation to the calculated targets
+                this.body.position.copy(this.tempPosition);
+                this.body.quaternion.copy(carObject.quaternion);
             }
         });
 
@@ -154,8 +152,8 @@
             onCollide: function (e) {
                 if (performance.now() - this.lastCollisionTime < 500) return;
                 this.lastCollisionTime = performance.now();
+
                 const collidedEl = e.detail.body.el;
-                
                 console.log(`[Collision] Car hit entity: ${collidedEl.id || collidedEl.tagName.toLowerCase()}`);
 
                 this.el.setAttribute('material', 'color', 'red');
@@ -167,7 +165,6 @@
 
         // Helper function for button events
         function dispatchCarMove(action, state) {
-            // LOG 1: Button event registered
             console.log(`[Button Click] Dispatching: ${action} to ${state}`);
             window.dispatchEvent(new CustomEvent('car-move', { detail: { action, state } }));
         }
@@ -177,21 +174,27 @@
 <body class="bg-gray-900">
 
     <div class="instruction-overlay">
-        Please click the **AR Cube Icon** in the bottom-right corner. Check the console for input logs!
+        1. Click the **AR Cube Icon** in the bottom-right corner.<br>2. Tap the ground to place the scene.
     </div>
 
     <a-scene
-        renderer="colorManagement: true;"
+        renderer="colorManagement: true; logarithmicDepthBuffer: true;"
         light="defaultLightsEnabled: false"
-        background="color: #222"
+        <!-- Configure the physics system -->
         physics="driver: ammo; debug: false; gravity: 0 -9.8 0;"
-        webxr="requiredFeatures: [hit-test, local-floor]; referenceSpaceType: local-floor;"
+        
+        <!-- STRICT AR CONFIGURATION -->
+        <!-- background="" makes the background transparent (shows the camera feed) -->
+        background="" 
+        <!-- restrict optionalModes to only immersive-ar -->
+        webxr="optionalModes: [immersive-ar]; requiredFeatures: [hit-test, local-floor]; referenceSpaceType: local-floor;"
+        <!-- /STRICT AR CONFIGURATION -->
     >
         
         <a-light type="ambient" color="#fff" intensity="0.5"></a-light>
         <a-light type="directional" color="#fff" intensity="0.8" position="0 5 2"></a-light>
         
-        <!-- Invisible Ground Plane for Collisions -->
+        <!-- Invisible Ground Plane for Collisions (opacity: 0.0) -->
         <a-box
             id="ground"
             static-body
@@ -203,7 +206,7 @@
             position="0 0 0"
         ></a-box>
 
-        <!-- The Car Entity -->
+        <!-- The Car Entity (kinematic-body is required for controlled movement) -->
         <a-box
             id="race-car"
             car-input-receiver
@@ -220,13 +223,13 @@
             <a-text value="CAR" color="#fff" align="center" position="0 0.1 0" scale="0.5 0.5 0.5"></a-text>
         </a-box>
 
-        <!-- Obstacles -->
+        <!-- Static Obstacles -->
         <a-box id="wall-1" static-body width="0.1" height="0.5" depth="2" position="1.5 0.25 -1" color="#ef4444" shadow></a-box>
         <a-box id="wall-2" static-body width="0.1" height="0.5" depth="2" position="-1.5 0.25 -1" color="#ef4444" shadow></a-box>
         <a-cylinder id="cylinder-obs" static-body radius="0.5" height="0.4" position="0 0.2 -3" color="#f97316" shadow></a-cylinder>
         <a-box id="ramp" static-body width="1.5" height="0.2" depth="1.5" position="0 0.1 -5" rotation="-10 0 0" color="#facc15" shadow></a-box>
 
-        <!-- Camera Rig -->
+        <!-- Camera Rig: The camera is automatically positioned by the AR system -->
         <a-entity id="rig">
             <a-camera id="main-camera"></a-camera>
         </a-entity>
