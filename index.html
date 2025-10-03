@@ -34,6 +34,20 @@
             transform: scale(0.95);
             box-shadow: none;
         }
+        .instruction-overlay {
+            position: fixed;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-size: 1rem;
+            font-weight: 500;
+            z-index: 1001;
+            text-align: center;
+        }
     </style>
 
     <!-- A-Frame Core -->
@@ -50,11 +64,11 @@
                 this.controls = { forward: false, left: false, right: false };
                 this.el.setAttribute('car-controls', this.controls);
 
-                // Setup global listeners for virtual controls
                 window.addEventListener('car-move', (e) => {
                     if (e.detail.action in this.controls) {
                         this.controls[e.detail.action] = e.detail.state;
-                        // Update the car-controls component with the new state
+                        // LOG 2: Input received and state updated
+                        console.log(`[Input Receiver] Action: ${e.detail.action}, State: ${e.detail.state}`);
                         this.el.setAttribute('car-controls', this.controls);
                     }
                 });
@@ -67,29 +81,32 @@
                 forward: { type: 'boolean', default: false },
                 left: { type: 'boolean', default: false },
                 right: { type: 'boolean', default: false },
-                speed: { type: 'number', default: 2.0 }, // Acceleration multiplier
-                rotationSpeed: { type: 'number', default: 0.8 }, // Rotation multiplier
+                speed: { type: 'number', default: 2.5 }, // Slightly increased speed
+                rotationSpeed: { type: 'number', default: 1.0 }, // Slightly increased rotation
             },
 
             init: function () {
-                this.body = this.el.body;
-                if (!this.body) {
-                    console.error("Car entity must have a physics body attached (kinematic-body).");
-                }
+                this.body = null;
+                this.el.sceneEl.addEventListener('physics-loaded', () => {
+                    this.body = this.el.body;
+                    if (!this.body) {
+                        console.error("Car entity failed to attach kinematic-body after physics loaded.");
+                    } else {
+                         // Initialize positions
+                        this.tempPosition = new THREE.Vector3().copy(this.el.object3D.position);
+                        this.tempQuaternion = new THREE.Quaternion().copy(this.el.object3D.quaternion);
+                    }
+                });
             },
 
             tick: function (t, dt) {
-                if (!this.body || dt > 100) return; // Prevent large jumps in movement on lag
+                if (!this.body || dt > 100) return;
                 
                 const { forward, left, right, speed, rotationSpeed } = this.data;
                 const body = this.body;
-                const currentRotation = this.el.object3D.rotation.y;
-                let currentPos = this.el.object3D.position;
                 
-                // Get the current velocity
-                const currentVelocity = new THREE.Vector3().copy(body.velocity);
-
-                let newVelocity = new THREE.Vector3().set(0, 0, 0);
+                // Get current visual rotation for steering
+                const carObject = this.el.object3D;
                 let angularVelocity = 0;
 
                 // --- 1. Rotation/Steering ---
@@ -100,36 +117,30 @@
                     angularVelocity -= rotationSpeed;
                 }
 
-                // Apply rotation to the object3D for smooth visual feedback
-                this.el.object3D.rotation.y += (angularVelocity * dt / 1000);
+                carObject.rotation.y += (angularVelocity * dt / 1000);
 
-                // --- 2. Forward Movement (Impulse/Velocity) ---
+                // --- 2. Forward Movement (Update Position) ---
                 if (forward) {
-                    // Calculate the direction vector based on the current yaw (Y rotation)
+                    // LOG 3: Confirm movement logic is running
+                    console.log("[Car Controls] Moving forward...");
+
+                    // Update visual position based on direction and speed
+                    const currentRotation = carObject.rotation.y;
                     const direction = new THREE.Vector3(
                         Math.sin(currentRotation),
                         0,
                         Math.cos(currentRotation)
                     );
                     
-                    // Apply movement in the calculated direction
-                    newVelocity.copy(direction).multiplyScalar(speed * 3);
+                    const moveDistance = speed * (dt / 1000);
                     
-                    // We set the kinematic body's position directly, blending current position with target velocity
-                    // For AR, using `kinematic-body` and `setPosition` is generally smoother than dynamic forces
-                    // because we want precise control over the visual model.
-                    
-                    // Simple positional update for kinematic body
-                    currentPos.x += newVelocity.x * (dt / 1000);
-                    currentPos.z += newVelocity.z * (dt / 1000);
-                    
-                    body.position.copy(currentPos);
-                    body.quaternion.copy(this.el.object3D.quaternion);
-                } else {
-                    // When not pressing forward, gradually slow down the visual model
-                    // This is handled by not calling setPosition, but the kinematic body 
-                    // stays where it was last placed. For simplicity, we just stop movement.
+                    this.tempPosition.x += direction.x * moveDistance;
+                    this.tempPosition.z += direction.z * moveDistance;
                 }
+                
+                // Always set the physics body's position/rotation to the calculated targets
+                body.position.copy(this.tempPosition);
+                body.quaternion.copy(carObject.quaternion);
             }
         });
 
@@ -141,33 +152,23 @@
             },
 
             onCollide: function (e) {
-                // Throttle the logging to avoid spamming the console
                 if (performance.now() - this.lastCollisionTime < 500) return;
                 this.lastCollisionTime = performance.now();
-
                 const collidedEl = e.detail.body.el;
-                const carBody = this.el.body;
                 
-                console.log(`Car collided with entity: ${collidedEl.id || collidedEl.tagName.toLowerCase()}`);
+                console.log(`[Collision] Car hit entity: ${collidedEl.id || collidedEl.tagName.toLowerCase()}`);
 
-                // Simple collision response: reduce velocity
-                if (carBody) {
-                    const currentVelocity = new THREE.Vector3().copy(carBody.velocity);
-                    // Halve the current velocity upon collision
-                    // Note: Since we are using kinematic, this relies more on the physics engine's internal response,
-                    // but we can manually try to 'bounce' the position a bit for feedback.
-                    
-                    // For now, just a visual and console feedback is enough to confirm the system works.
-                    this.el.setAttribute('material', 'color', 'red');
-                    setTimeout(() => {
-                        this.el.setAttribute('material', 'color', '#0070E0'); // Return to blue
-                    }, 100);
-                }
+                this.el.setAttribute('material', 'color', 'red');
+                setTimeout(() => {
+                    this.el.setAttribute('material', 'color', '#0070E0');
+                }, 100);
             }
         });
 
         // Helper function for button events
         function dispatchCarMove(action, state) {
+            // LOG 1: Button event registered
+            console.log(`[Button Click] Dispatching: ${action} to ${state}`);
             window.dispatchEvent(new CustomEvent('car-move', { detail: { action, state } }));
         }
 
@@ -175,20 +176,22 @@
 </head>
 <body class="bg-gray-900">
 
+    <div class="instruction-overlay">
+        Please click the **AR Cube Icon** in the bottom-right corner. Check the console for input logs!
+    </div>
+
     <a-scene
         renderer="colorManagement: true;"
         light="defaultLightsEnabled: false"
         background="color: #222"
         physics="driver: ammo; debug: false; gravity: 0 -9.8 0;"
-        webxr="requiredFeatures: [hit-test, local-floor]; optionalFeatures: [light-estimation, camera-access]; referenceSpaceType: local-floor;"
+        webxr="requiredFeatures: [hit-test, local-floor]; referenceSpaceType: local-floor;"
     >
-
-        <!-- Environment and Lighting -->
-        <a-sky color="#6366f1"></a-sky> <!-- Simple background -->
+        
         <a-light type="ambient" color="#fff" intensity="0.5"></a-light>
         <a-light type="directional" color="#fff" intensity="0.8" position="0 5 2"></a-light>
         
-        <!-- Floor/Ground Plane (Static Physics Body) -->
+        <!-- Invisible Ground Plane for Collisions -->
         <a-box
             id="ground"
             static-body
@@ -196,12 +199,11 @@
             width="50"
             depth="50"
             color="#22c55e"
-            material="opacity: 0.3"
+            material="opacity: 0.0" 
             position="0 0 0"
         ></a-box>
 
-        <!-- 1. The Car Entity (Placeholder for car.glb) -->
-        <!-- Start position slightly above ground (y=0.25) -->
+        <!-- The Car Entity -->
         <a-box
             id="race-car"
             car-input-receiver
@@ -215,63 +217,18 @@
             color="#0070E0"
             shadow
         >
-            <!-- Label to show it's the car -->
             <a-text value="CAR" color="#fff" align="center" position="0 0.1 0" scale="0.5 0.5 0.5"></a-text>
         </a-box>
 
-        <!-- 2. Obstacles (Static Physics Bodies) -->
+        <!-- Obstacles -->
+        <a-box id="wall-1" static-body width="0.1" height="0.5" depth="2" position="1.5 0.25 -1" color="#ef4444" shadow></a-box>
+        <a-box id="wall-2" static-body width="0.1" height="0.5" depth="2" position="-1.5 0.25 -1" color="#ef4444" shadow></a-box>
+        <a-cylinder id="cylinder-obs" static-body radius="0.5" height="0.4" position="0 0.2 -3" color="#f97316" shadow></a-cylinder>
+        <a-box id="ramp" static-body width="1.5" height="0.2" depth="1.5" position="0 0.1 -5" rotation="-10 0 0" color="#facc15" shadow></a-box>
 
-        <!-- Wall 1 -->
-        <a-box
-            id="wall-1"
-            static-body
-            width="0.1"
-            height="0.5"
-            depth="2"
-            position="1.5 0.25 -1"
-            color="#ef4444"
-            shadow
-        ></a-box>
-
-        <!-- Wall 2 (Barrier) -->
-        <a-box
-            id="wall-2"
-            static-body
-            width="0.1"
-            height="0.5"
-            depth="2"
-            position="-1.5 0.25 -1"
-            color="#ef4444"
-            shadow
-        ></a-box>
-        
-        <!-- Cylinder Obstacle -->
-        <a-cylinder
-            id="cylinder-obs"
-            static-body
-            radius="0.5"
-            height="0.4"
-            position="0 0.2 -3"
-            color="#f97316"
-            shadow
-        ></a-cylinder>
-
-        <!-- Sloped Ramp (Testing height change) -->
-        <a-box
-            id="ramp"
-            static-body
-            width="1.5"
-            height="0.2"
-            depth="1.5"
-            position="0 0.1 -5"
-            rotation="-10 0 0"
-            color="#facc15"
-            shadow
-        ></a-box>
-
-        <!-- The Camera MUST be a child of the AR rig -->
-        <a-entity id="rig" movement-controls="controls: keyboard, trackpad, touch" position="0 0 0">
-            <a-camera position="0 1.6 0" look-controls id="main-camera"></a-camera>
+        <!-- Camera Rig -->
+        <a-entity id="rig">
+            <a-camera id="main-camera"></a-camera>
         </a-entity>
 
     </a-scene>
