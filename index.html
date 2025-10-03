@@ -1,1 +1,101 @@
 
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>AR Car Racing Demo</title>
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  </head>
+  <body style="margin:0; overflow:hidden;">
+    <!-- Scene -->
+    <a-scene
+      renderer="colorManagement: true;"
+      xr-mode-ui="enabled: true"
+      webxr="optionalFeatures: hit-test, local-floor"
+      vr-mode-ui="enabled: false"
+      embedded
+    >
+      <!-- Camera -->
+      <a-entity camera look-controls></a-entity>
+
+      <!-- Obstacles -->
+      <a-box id="obstacle1" color="red" depth="1" height="1" width="1" position="0 0 -5"></a-box>
+      <a-cylinder id="obstacle2" color="blue" radius="0.5" height="1" position="2 0 -3"></a-cylinder>
+
+      <!-- Car (hidden until placed) -->
+      <a-entity id="car" gltf-model="#carModel" scale="0.2 0.2 0.2" visible="false"></a-entity>
+
+      <!-- Assets -->
+      <a-assets>
+        <a-asset-item id="carModel" src="car.glb"></a-asset-item>
+      </a-assets>
+    </a-scene>
+
+    <!-- Controls -->
+    <div style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:10;">
+      <button id="forward">▲</button>
+      <button id="left">◀</button>
+      <button id="right">▶</button>
+    </div>
+
+    <script>
+      const car = document.getElementById('car');
+      const scene = document.querySelector('a-scene');
+
+      let carPlaced = false;
+      let moving = {f: false, l: false, r: false};
+
+      // Tap to place the car
+      scene.addEventListener('click', (e) => {
+        if (!carPlaced) {
+          car.setAttribute('position', '0 0 -2'); // place car 2m ahead
+          car.setAttribute('visible', 'true');
+          carPlaced = true;
+        }
+      });
+
+      // Button events
+      document.getElementById('forward').addEventListener('mousedown', () => moving.f = true);
+      document.getElementById('forward').addEventListener('mouseup', () => moving.f = false);
+
+      document.getElementById('left').addEventListener('mousedown', () => moving.l = true);
+      document.getElementById('left').addEventListener('mouseup', () => moving.l = false);
+
+      document.getElementById('right').addEventListener('mousedown', () => moving.r = true);
+      document.getElementById('right').addEventListener('mouseup', () => moving.r = false);
+
+      // Movement loop
+      function tick() {
+        if (carPlaced) {
+          const obj = car.object3D;
+          if (moving.l) obj.rotation.y += 0.03;
+          if (moving.r) obj.rotation.y -= 0.03;
+          if (moving.f) {
+            const dir = new THREE.Vector3(0, 0, -0.05);
+            dir.applyQuaternion(obj.quaternion);
+            obj.position.add(dir);
+
+            // Simple collision detection
+            checkCollision(obj.position);
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+      tick();
+
+      // Check collision with obstacles
+      function checkCollision(pos) {
+        const obstacles = [
+          document.getElementById('obstacle1').object3D.position,
+          document.getElementById('obstacle2').object3D.position
+        ];
+        obstacles.forEach(o => {
+          const dist = pos.distanceTo(o);
+          if (dist < 1) {
+            console.log("💥 Collision detected!");
+          }
+        });
+      }
+    </script>
+  </body>
+</html>
