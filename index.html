@@ -43,30 +43,61 @@
     </style>
 
     <script>
-        // Custom component to handle the tap-to-place action in AR
-        AFRAME.registerComponent('tap-to-place', {
+        // Custom component to listen for AR session start and handle touch events
+        AFRAME.registerComponent('ar-touch-handler', {
             init: function () {
-                this.el.addEventListener('ar-hit-test-event', this.handleHitTest.bind(this));
-            },
-
-            handleHitTest: function (event) {
-                if (!event.detail.successful) return;
-
-                const hit = event.detail.intersection;
+                const scene = this.el;
                 const car = document.getElementById('car-placeholder');
+                const instruction = document.getElementById('instruction');
                 
-                // Place the car at the detected hit position on the real-world surface
-                car.setAttribute('position', {
-                    x: hit.x,
-                    y: hit.y + 0.15, // Lift the car slightly above the ground
-                    z: hit.z
+                let isAR = false;
+                
+                // 1. Check if we enter AR mode
+                scene.addEventListener('enter-vr', () => {
+                    // Check if the current session is AR (immersive-ar)
+                    if (scene.is('ar-mode')) {
+                        isAR = true;
+                        console.log('Successfully entered AR mode.');
+                        // Add touch listener only when AR is active
+                        scene.addEventListener('touchstart', this.handleTouch.bind(this));
+                        
+                        // Give the user a hint that placement is needed
+                        instruction.textContent = "Tap a flat surface to place the car.";
+                    } else {
+                         // If it enters VR mode instead
+                        isAR = false;
+                        instruction.textContent = "AR Mode not available or failed to start. Defaulting to VR view.";
+                    }
+                    document.getElementById('ar-start-button').style.display = 'none';
                 });
-                car.setAttribute('visible', true);
 
-                console.log('Car placed at: ', hit.x, hit.y, hit.z);
+                this.handleTouch = function(evt) {
+                    if (!isAR || car.getAttribute('visible')) return; // Already placed
 
-                // Hide instructions once placed
-                document.getElementById('instruction').style.opacity = 0;
+                    // Request hit test from the WebXR system
+                    scene.components['webxr'].hitTest(0.5, 0.5, (hit) => {
+                        if (hit) {
+                            // Hit test successful, place the car
+                            car.setAttribute('position', {
+                                x: hit.x,
+                                y: hit.y + 0.15, // Lift the car slightly above the ground
+                                z: hit.z
+                            });
+                            car.setAttribute('visible', true);
+                            
+                            console.log('Car placed at: ', hit.x, hit.y, hit.z);
+
+                            // Hide instructions once placed
+                            instruction.style.opacity = 0;
+
+                            // Remove touch listener after placement to avoid moving the car accidentally
+                            scene.removeEventListener('touchstart', this.handleTouch);
+                        } else {
+                            // Hit test failed (e.g., pointed at the sky or a vertical wall)
+                            console.log('Hit test failed. Try pointing at a flat surface.');
+                        }
+                    });
+                };
             }
         });
 
@@ -74,26 +105,23 @@
         function startARSession() {
             const scene = document.querySelector('a-scene');
             if (scene.hasLoaded) {
-                // This command tries to enter AR mode directly
                 scene.enterAR();
             } else {
                 scene.addEventListener('loaded', () => scene.enterAR());
             }
-            // Hide the button after click attempt
-            document.getElementById('ar-start-button').style.display = 'none';
         }
     </script>
 </head>
 <body>
     <div id="instruction" class="instruction-overlay">
-        1. Click the **AR Cube Icon** in the bottom-right corner.<br>
-        2. Point your camera at a flat surface (floor/table) and **tap the screen** to place the car.
+        Click the **AR Cube Icon** below, then tap a flat surface to place the car.
     </div>
 
     <!-- Fallback button for environments where the A-Frame icon doesn't appear -->
     <button id="ar-start-button" onclick="startARSession()">Click to Start AR Session</button>
 
     <a-scene
+        ar-touch-handler
         renderer="logarithmicDepthBuffer: true; antialias: true;"
         light="defaultLightsEnabled: false"
         
@@ -106,19 +134,15 @@
         <a-light type="ambient" color="#fff" intensity="0.6"></a-light>
         <a-light type="directional" color="#fff" intensity="1.0" position="0 5 5"></a-light>
 
-        <!-- Camera Rig: Includes raycaster/cursor for hit-testing -->
-        <a-entity id="rig" tap-to-place>
-            <a-camera id="main-camera">
-                <!-- Raycaster is essential for detecting surfaces in AR -->
-                <a-cursor raycaster="objects: .collidable; far: 10;"></a-cursor>
-            </a-camera>
+        <!-- Camera Rig: No longer needs tap-to-place here -->
+        <a-entity id="rig">
+            <a-camera id="main-camera"></a-camera>
         </a-entity>
         
         <!-- Car Placeholder (Hidden initially, visible only after placement) -->
-        <!-- Replace this with your <a-gltf-model src="car.glb"...> later. -->
+        <!-- This is a placeholder for your car.glb model -->
         <a-box
             id="car-placeholder"
-            class="collidable"
             width="0.5"
             height="0.3"
             depth="1.0"
@@ -133,3 +157,4 @@
     </a-scene>
 </body>
 </html>
+
