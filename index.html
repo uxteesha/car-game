@@ -1,61 +1,315 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="UTF-8">
-    <title>AR Car Racing Debug</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Racing Physics Prototype</title>
+    <!-- Tailwind CSS for simple, modern styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the AR overlay */
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; }
+        .controls-container {
+            position: fixed;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 1rem;
+            z-index: 1000;
+        }
+        .control-button {
+            padding: 1rem 2rem;
+            font-size: 1.25rem;
+            font-weight: bold;
+            color: white;
+            border: none;
+            border-radius: 9999px; /* Fully rounded */
+            cursor: pointer;
+            transition: all 0.15s ease-in-out;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            touch-action: manipulation; /* Improves touch responsiveness */
+        }
+        .control-button:active {
+            transform: scale(0.95);
+            box-shadow: none;
+        }
+    </style>
+
+    <!-- A-Frame Core -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-  </head>
-  <body style="margin:0; overflow:hidden;">
-    <a-scene embedded>
-      <!-- Camera -->
-      <a-entity camera look-controls position="0 1.6 5"></a-entity>
-
-      <!-- Car (always visible) -->
-      <a-assets>
-        <a-asset-item id="carModel" src="car.glb"></a-asset-item>
-      </a-assets>
-
-      <a-entity id="car" gltf-model="#carModel" scale="0.2 0.2 0.2" position="0 0 -3"></a-entity>
-
-      <!-- Obstacles -->
-      <a-box id="obstacle1" color="red" depth="1" height="1" width="1" position="0 0 -6"></a-box>
-      <a-cylinder id="obstacle2" color="blue" radius="0.5" height="1" position="2 0 -4"></a-cylinder>
-    </a-scene>
-
-    <!-- Controls -->
-    <div style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:10;">
-      <button id="forward">▲</button>
-      <button id="left">◀</button>
-      <button id="right">▶</button>
-    </div>
+    <!-- A-Frame Extras for Physics (Ammo.js) -->
+    <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v7.2.0/dist/aframe-extras.min.js"></script>
 
     <script>
-      const car = document.getElementById('car');
-      let moving = {f:false,l:false,r:false};
+        // --- A-FRAME CUSTOM COMPONENTS ---
 
-      // Button events
-      document.getElementById('forward').onmousedown = ()=> moving.f = true;
-      document.getElementById('forward').onmouseup = ()=> moving.f = false;
+        // 1. Component to map external button presses to component state
+        AFRAME.registerComponent('car-input-receiver', {
+            init: function () {
+                this.controls = { forward: false, left: false, right: false };
+                this.el.setAttribute('car-controls', this.controls);
 
-      document.getElementById('left').onmousedown = ()=> moving.l = true;
-      document.getElementById('left').onmouseup = ()=> moving.l = false;
+                // Setup global listeners for virtual controls
+                window.addEventListener('car-move', (e) => {
+                    if (e.detail.action in this.controls) {
+                        this.controls[e.detail.action] = e.detail.state;
+                        // Update the car-controls component with the new state
+                        this.el.setAttribute('car-controls', this.controls);
+                    }
+                });
+            }
+        });
 
-      document.getElementById('right').onmousedown = ()=> moving.r = true;
-      document.getElementById('right').onmouseup = ()=> moving.r = false;
+        // 2. Component to handle car movement using physics (kinematic body)
+        AFRAME.registerComponent('car-controls', {
+            schema: {
+                forward: { type: 'boolean', default: false },
+                left: { type: 'boolean', default: false },
+                right: { type: 'boolean', default: false },
+                speed: { type: 'number', default: 2.0 }, // Acceleration multiplier
+                rotationSpeed: { type: 'number', default: 0.8 }, // Rotation multiplier
+            },
 
-      // Movement loop
-      function tick() {
-        const obj = car.object3D;
-        if (moving.l) obj.rotation.y += 0.03;
-        if (moving.r) obj.rotation.y -= 0.03;
-        if (moving.f) {
-          const dir = new THREE.Vector3(0,0,-0.05);
-          dir.applyQuaternion(obj.quaternion);
-          obj.position.add(dir);
+            init: function () {
+                this.body = this.el.body;
+                if (!this.body) {
+                    console.error("Car entity must have a physics body attached (kinematic-body).");
+                }
+            },
+
+            tick: function (t, dt) {
+                if (!this.body || dt > 100) return; // Prevent large jumps in movement on lag
+                
+                const { forward, left, right, speed, rotationSpeed } = this.data;
+                const body = this.body;
+                const currentRotation = this.el.object3D.rotation.y;
+                let currentPos = this.el.object3D.position;
+                
+                // Get the current velocity
+                const currentVelocity = new THREE.Vector3().copy(body.velocity);
+
+                let newVelocity = new THREE.Vector3().set(0, 0, 0);
+                let angularVelocity = 0;
+
+                // --- 1. Rotation/Steering ---
+                if (left) {
+                    angularVelocity += rotationSpeed;
+                }
+                if (right) {
+                    angularVelocity -= rotationSpeed;
+                }
+
+                // Apply rotation to the object3D for smooth visual feedback
+                this.el.object3D.rotation.y += (angularVelocity * dt / 1000);
+
+                // --- 2. Forward Movement (Impulse/Velocity) ---
+                if (forward) {
+                    // Calculate the direction vector based on the current yaw (Y rotation)
+                    const direction = new THREE.Vector3(
+                        Math.sin(currentRotation),
+                        0,
+                        Math.cos(currentRotation)
+                    );
+                    
+                    // Apply movement in the calculated direction
+                    newVelocity.copy(direction).multiplyScalar(speed * 3);
+                    
+                    // We set the kinematic body's position directly, blending current position with target velocity
+                    // For AR, using `kinematic-body` and `setPosition` is generally smoother than dynamic forces
+                    // because we want precise control over the visual model.
+                    
+                    // Simple positional update for kinematic body
+                    currentPos.x += newVelocity.x * (dt / 1000);
+                    currentPos.z += newVelocity.z * (dt / 1000);
+                    
+                    body.position.copy(currentPos);
+                    body.quaternion.copy(this.el.object3D.quaternion);
+                } else {
+                    // When not pressing forward, gradually slow down the visual model
+                    // This is handled by not calling setPosition, but the kinematic body 
+                    // stays where it was last placed. For simplicity, we just stop movement.
+                }
+            }
+        });
+
+        // 3. Component to handle collision events
+        AFRAME.registerComponent('car-collision-handler', {
+            init: function () {
+                this.el.addEventListener('collide', this.onCollide.bind(this));
+                this.lastCollisionTime = 0;
+            },
+
+            onCollide: function (e) {
+                // Throttle the logging to avoid spamming the console
+                if (performance.now() - this.lastCollisionTime < 500) return;
+                this.lastCollisionTime = performance.now();
+
+                const collidedEl = e.detail.body.el;
+                const carBody = this.el.body;
+                
+                console.log(`Car collided with entity: ${collidedEl.id || collidedEl.tagName.toLowerCase()}`);
+
+                // Simple collision response: reduce velocity
+                if (carBody) {
+                    const currentVelocity = new THREE.Vector3().copy(carBody.velocity);
+                    // Halve the current velocity upon collision
+                    // Note: Since we are using kinematic, this relies more on the physics engine's internal response,
+                    // but we can manually try to 'bounce' the position a bit for feedback.
+                    
+                    // For now, just a visual and console feedback is enough to confirm the system works.
+                    this.el.setAttribute('material', 'color', 'red');
+                    setTimeout(() => {
+                        this.el.setAttribute('material', 'color', '#0070E0'); // Return to blue
+                    }, 100);
+                }
+            }
+        });
+
+        // Helper function for button events
+        function dispatchCarMove(action, state) {
+            window.dispatchEvent(new CustomEvent('car-move', { detail: { action, state } }));
         }
-        requestAnimationFrame(tick);
-      }
-      tick();
+
     </script>
-  </body>
+</head>
+<body class="bg-gray-900">
+
+    <a-scene
+        renderer="colorManagement: true;"
+        light="defaultLightsEnabled: false"
+        background="color: #222"
+        physics="driver: ammo; debug: false; gravity: 0 -9.8 0;"
+        webxr="requiredFeatures: [hit-test, local-floor]; optionalFeatures: [light-estimation, camera-access]; referenceSpaceType: local-floor;"
+    >
+
+        <!-- Environment and Lighting -->
+        <a-sky color="#6366f1"></a-sky> <!-- Simple background -->
+        <a-light type="ambient" color="#fff" intensity="0.5"></a-light>
+        <a-light type="directional" color="#fff" intensity="0.8" position="0 5 2"></a-light>
+        
+        <!-- Floor/Ground Plane (Static Physics Body) -->
+        <a-box
+            id="ground"
+            static-body
+            height="0.01"
+            width="50"
+            depth="50"
+            color="#22c55e"
+            material="opacity: 0.3"
+            position="0 0 0"
+        ></a-box>
+
+        <!-- 1. The Car Entity (Placeholder for car.glb) -->
+        <!-- Start position slightly above ground (y=0.25) -->
+        <a-box
+            id="race-car"
+            car-input-receiver
+            car-controls
+            car-collision-handler
+            kinematic-body="type: kinematic; mass: 5;"
+            width="0.3"
+            height="0.2"
+            depth="0.6"
+            position="0 0.2 0"
+            color="#0070E0"
+            shadow
+        >
+            <!-- Label to show it's the car -->
+            <a-text value="CAR" color="#fff" align="center" position="0 0.1 0" scale="0.5 0.5 0.5"></a-text>
+        </a-box>
+
+        <!-- 2. Obstacles (Static Physics Bodies) -->
+
+        <!-- Wall 1 -->
+        <a-box
+            id="wall-1"
+            static-body
+            width="0.1"
+            height="0.5"
+            depth="2"
+            position="1.5 0.25 -1"
+            color="#ef4444"
+            shadow
+        ></a-box>
+
+        <!-- Wall 2 (Barrier) -->
+        <a-box
+            id="wall-2"
+            static-body
+            width="0.1"
+            height="0.5"
+            depth="2"
+            position="-1.5 0.25 -1"
+            color="#ef4444"
+            shadow
+        ></a-box>
+        
+        <!-- Cylinder Obstacle -->
+        <a-cylinder
+            id="cylinder-obs"
+            static-body
+            radius="0.5"
+            height="0.4"
+            position="0 0.2 -3"
+            color="#f97316"
+            shadow
+        ></a-cylinder>
+
+        <!-- Sloped Ramp (Testing height change) -->
+        <a-box
+            id="ramp"
+            static-body
+            width="1.5"
+            height="0.2"
+            depth="1.5"
+            position="0 0.1 -5"
+            rotation="-10 0 0"
+            color="#facc15"
+            shadow
+        ></a-box>
+
+        <!-- The Camera MUST be a child of the AR rig -->
+        <a-entity id="rig" movement-controls="controls: keyboard, trackpad, touch" position="0 0 0">
+            <a-camera position="0 1.6 0" look-controls id="main-camera"></a-camera>
+        </a-entity>
+
+    </a-scene>
+
+    <!-- Virtual AR Controls (Touch Targets) -->
+    <div class="controls-container">
+        <!-- Forward Button -->
+        <button
+            class="control-button bg-green-600 hover:bg-green-700"
+            ontouchstart="dispatchCarMove('forward', true)"
+            ontouchend="dispatchCarMove('forward', false)"
+            onmousedown="dispatchCarMove('forward', true)"
+            onmouseup="dispatchCarMove('forward', false)"
+        >
+            Forward
+        </button>
+
+        <!-- Left Button -->
+        <button
+            class="control-button bg-blue-600 hover:bg-blue-700"
+            ontouchstart="dispatchCarMove('left', true)"
+            ontouchend="dispatchCarMove('left', false)"
+            onmousedown="dispatchCarMove('left', true)"
+            onmouseup="dispatchCarMove('left', false)"
+        >
+            Left
+        </button>
+
+        <!-- Right Button -->
+        <button
+            class="control-button bg-blue-600 hover:bg-blue-700"
+            ontouchstart="dispatchCarMove('right', true)"
+            ontouchend="dispatchCarMove('right', false)"
+            onmousedown="dispatchCarMove('right', true)"
+            onmouseup="dispatchCarMove('right', false)"
+        >
+            Right
+        </button>
+    </div>
+</body>
 </html>
