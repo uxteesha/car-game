@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minimal AR Car Display</title>
+    <title>Strict AR Placement Test</title>
     <!-- A-Frame Core -->
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
     <style>
@@ -22,44 +22,113 @@
             z-index: 1001;
             text-align: center;
             font-family: sans-serif;
+            opacity: 1;
+            transition: opacity 0.5s;
+        }
+        /* Style for the button that appears in VR/Desktop to start AR */
+        #ar-start-button {
+            position: fixed;
+            bottom: 25vh;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 1rem 2rem;
+            font-size: 1.5rem;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            z-index: 1002;
         }
     </style>
+
+    <script>
+        // Custom component to handle the tap-to-place action in AR
+        AFRAME.registerComponent('tap-to-place', {
+            init: function () {
+                this.el.addEventListener('ar-hit-test-event', this.handleHitTest.bind(this));
+            },
+
+            handleHitTest: function (event) {
+                if (!event.detail.successful) return;
+
+                const hit = event.detail.intersection;
+                const car = document.getElementById('car-placeholder');
+                
+                // Place the car at the detected hit position on the real-world surface
+                car.setAttribute('position', {
+                    x: hit.x,
+                    y: hit.y + 0.15, // Lift the car slightly above the ground
+                    z: hit.z
+                });
+                car.setAttribute('visible', true);
+
+                console.log('Car placed at: ', hit.x, hit.y, hit.z);
+
+                // Hide instructions once placed
+                document.getElementById('instruction').style.opacity = 0;
+            }
+        });
+
+        // Function to programmatically try to enter AR mode (as a fallback)
+        function startARSession() {
+            const scene = document.querySelector('a-scene');
+            if (scene.hasLoaded) {
+                // This command tries to enter AR mode directly
+                scene.enterAR();
+            } else {
+                scene.addEventListener('loaded', () => scene.enterAR());
+            }
+            // Hide the button after click attempt
+            document.getElementById('ar-start-button').style.display = 'none';
+        }
+    </script>
 </head>
 <body>
-    <div class="instruction-overlay">
-        1. Click the **AR Cube Icon** to start camera passthrough.<br>
-        2. Tap your floor/table to place the virtual car.
+    <div id="instruction" class="instruction-overlay">
+        1. Click the **AR Cube Icon** in the bottom-right corner.<br>
+        2. Point your camera at a flat surface (floor/table) and **tap the screen** to place the car.
     </div>
 
+    <!-- Fallback button for environments where the A-Frame icon doesn't appear -->
+    <button id="ar-start-button" onclick="startARSession()">Click to Start AR Session</button>
+
     <a-scene
-        renderer="logarithmicDepthBuffer: true;"
+        renderer="logarithmicDepthBuffer: true; antialias: true;"
         light="defaultLightsEnabled: false"
         
-        <!-- 1. Makes the background transparent to show the camera feed -->
+        <!-- Background is empty to show the camera feed -->
         background="" 
         
-        <!-- 2. Forces AR mode (immersive-ar) and enables floor detection (local-floor) -->
+        <!-- STRICT AR Configuration: Only allow AR (immersive-ar) and enable hit-test for placement -->
         webxr="optionalModes: [immersive-ar]; requiredFeatures: [hit-test, local-floor]; referenceSpaceType: local-floor;"
     >
         <a-light type="ambient" color="#fff" intensity="0.6"></a-light>
         <a-light type="directional" color="#fff" intensity="1.0" position="0 5 5"></a-light>
 
-        <!-- CAR PLACEHOLDER (Will appear after you tap the surface) -->
-        <!-- Replace this entire tag with your GLTF model once AR is working. -->
+        <!-- Camera Rig: Includes raycaster/cursor for hit-testing -->
+        <a-entity id="rig" tap-to-place>
+            <a-camera id="main-camera">
+                <!-- Raycaster is essential for detecting surfaces in AR -->
+                <a-cursor raycaster="objects: .collidable; far: 10;"></a-cursor>
+            </a-camera>
+        </a-entity>
+        
+        <!-- Car Placeholder (Hidden initially, visible only after placement) -->
+        <!-- Replace this with your <a-gltf-model src="car.glb"...> later. -->
         <a-box
             id="car-placeholder"
+            class="collidable"
             width="0.5"
             height="0.3"
             depth="1.0"
             position="0 0.15 0"
             color="#00EE00"
             shadow
+            visible="false"
         >
             <a-text value="CAR HERE" color="#111" align="center" position="0 0.16 0" scale="0.3 0.3 0.3"></a-text>
         </a-box>
-        
-        <!-- Camera Rig -->
-        <a-entity camera></a-entity>
 
     </a-scene>
 </body>
